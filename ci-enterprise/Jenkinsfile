@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "sentinelgate/telemetry-observatory"
+        IMAGE_TAG  = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+        SCANNER_HOME = tool 'SonarQubeScanner'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('1. GitLeaks Secret Audit') {
+            steps {
+                sh 'gitleaks detect --source . --no-git --redact'
+            }
+        }
+
+        stage('2. Dependency & SAST Analysis') {
+            steps {
+                sh 'npm ci --ignore-scripts'
+                withSonarQubeEnv('SonarQube-Enterprise') {
+                    sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectName=SentinelGate -Dsonar.projectKey=sentinelgate-core -Dsonar.sources=src"
+                }
+            }
+        }
+
+        stage('3. Quality Gate Enforcement') {
+            steps {
+                timeout(time: 3, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('4. Terraform IaC Security Compliance') {
+            steps {
+                sh 'trivy config ./iac --severity CRITICAL,HIGH --exit-code 1'
+            }
+        }
+
+        stage('5. Build & Scan Hardened Container') {
+            steps {
+                sh "docker build -f docker/Dockerfile -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                sh "trivy image --format json --output public/telemetry/latest-scan.json --severity CRITICAL,HIGH ${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'public/telemetry/*.json', fingerprint: true
+            cleanWs()
+        }
+    }
+}

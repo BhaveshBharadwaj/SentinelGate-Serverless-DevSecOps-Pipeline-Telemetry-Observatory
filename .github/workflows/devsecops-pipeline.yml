@@ -1,0 +1,76 @@
+name: SentinelGate DevSecOps Pipeline & Telemetry Publisher
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  security-events: write
+
+jobs:
+  shift-left-security-gate:
+    name: SAST, Terraform Audit & Trivy Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies (Clean Lockfile)
+        run: npm ci --ignore-scripts
+
+      - name: Stage 1 — TypeScript AST & Static Code Verification
+        run: npm run build
+
+      - name: Stage 2 — Trivy Terraform IaC Compliance Scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: 'config'
+          scan-ref: './iac'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Stage 3 — Build Hardened Multi-Stage Container
+        run: |
+          docker build -f docker/Dockerfile -t sentinelgate:${{ github.sha }} .
+
+      - name: Stage 4 — Trivy Container Image CVE Scan (JSON Telemetry Export)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: 'sentinelgate:${{ github.sha }}'
+          format: 'json'
+          output: 'public/telemetry/trivy-image-report.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Rebuild Static Bundle with Latest Security Telemetry
+        run: npm run build
+
+      - name: Upload Production Bundle Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy-observatory:
+    name: Deploy Live Telemetry Portal to GitHub Pages
+    needs: shift-left-security-gate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages CDN
+        id: deployment
+        uses: actions/deploy-pages@v4
