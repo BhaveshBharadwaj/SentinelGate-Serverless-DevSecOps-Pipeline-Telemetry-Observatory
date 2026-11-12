@@ -56,16 +56,3 @@ npm run dev
 npm run build
 ```
 
----
-
-## 🌐 Zero-Cost Deployment (Vercel or GitHub Pages)
-
-### Option A: Deploy to Vercel
-1. Push this repository to your GitHub account.
-2. Import the repository into **Vercel** (Framework Preset: **Vite**).
-3. Click **Deploy** — `vercel.json` is pre-configured.
-
-### Option B: Deploy to GitHub Pages
-1. In your GitHub repository, navigate to **Settings → Pages**.
-2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
-3. Push to the `main` branch — `.github/workflows/devsecops-pipeline.yml` will automatically run the security gates and publish the live observatory.
